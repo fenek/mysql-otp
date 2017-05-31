@@ -113,8 +113,9 @@ prepare_test() ->
 
 bad_protocol_version_test() ->
     Sock = mock_tcp:create([{recv, <<2, 0, 0, 0, 9, 0>>}]),
+    UndefSSLOpts = undefined,
     ?assertError(unknown_protocol,
-                 mysql_protocol:handshake("foo", "bar", "db", mock_tcp, Sock, false)),
+                 mysql_protocol:handshake("foo", "bar", "db", mock_tcp, UndefSSLOpts, Sock, false)),
     mock_tcp:close(Sock).
 
 %% --- Helper functions for the above tests ---

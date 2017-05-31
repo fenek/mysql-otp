@@ -32,9 +32,10 @@ Synopsis
 --------
 
 ```Erlang
-%% Connect
+%% Connect (ssl option is not mandatory)
 {ok, Pid} = mysql:start_link([{host, "localhost"}, {user, "foo"},
-                              {password, "hello"}, {database, "test"}]),
+                              {password, "hello"}, {database, "test"},
+                              {ssl, [{cacertfile, "/path/to/ca.pem"}]}]),
 
 %% Select
 {ok, ColumnNames, Rows} =
