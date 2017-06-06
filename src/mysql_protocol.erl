@@ -54,7 +54,8 @@ handshake(Username, Password, Database, SockModule0, SSLOpts, Socket0, SetFoundR
     {ok, HandshakePacket, SeqNum1} = recv_packet(SockModule0, Socket0, SeqNum0),
     Handshake = parse_handshake(HandshakePacket),
     {ok, SockModule, Socket, SeqNum2}
-    = maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, Handshake, SSLOpts),
+    = maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, Handshake,
+                           SSLOpts, Database, SetFoundRows),
     Response = build_handshake_response(Handshake, Username, Password,
                                         Database, SetFoundRows),
     {ok, SeqNum3} = send_packet(SockModule, Socket, Response, SeqNum2),
@@ -245,12 +246,15 @@ server_version_to_list(ServerVersion) ->
                            Socket0 :: term(),
                            SeqNum1 :: non_neg_integer(),
                            Handshake :: #handshake{},
-                           SSLOpts :: undefined | list()) ->
+                           SSLOpts :: undefined | list(),
+                           Database :: iodata() | undefined,
+                           SetFoundRows :: boolean()) ->
     {ok, SockModule :: module(), Socket :: term(), SeqNum2 :: non_neg_integer()}.
-maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, _Handshake, undefined) ->
+maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, _Handshake, undefined,
+                     _Database, _SetFoundRows) ->
     {ok, SockModule0, Socket0, SeqNum1};
-maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, Handshake, SSLOpts) ->
-    Response = build_handshake_response(Handshake),
+maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, Handshake, SSLOpts, Database, SetFoundRows) ->
+    Response = build_handshake_response(Handshake, Database, SetFoundRows),
     {ok, SeqNum2} = send_packet(SockModule0, Socket0, Response, SeqNum1),
     case mysql_sock_ssl:connect(Socket0, SSLOpts, 5000) of
         {ok, SSLSocket} ->
@@ -259,9 +263,9 @@ maybe_do_ssl_upgrade(SockModule0, Socket0, SeqNum1, Handshake, SSLOpts) ->
             exit({failed_to_upgrade_socket, Reason})
     end.
 
--spec build_handshake_response(#handshake{}) -> binary().
-build_handshake_response(Handshake) ->
-    CapabilityFlags = basic_capabilities(false, false),
+-spec build_handshake_response(#handshake{}, iodata() | undefined, boolean()) -> binary().
+build_handshake_response(Handshake, Database, SetFoundRows) ->
+    CapabilityFlags = basic_capabilities(Database /= undefined, SetFoundRows),
     verify_server_capabilities(Handshake, CapabilityFlags),
     ClientCapabilities = add_client_capabilities(CapabilityFlags),
     ClientSSLCapabilities = ClientCapabilities bor ?CLIENT_SSL,
