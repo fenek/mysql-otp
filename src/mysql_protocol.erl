@@ -58,11 +58,25 @@ handshake(Username, Password, Database, SockModule0, SSLOpts, Socket0, SetFoundR
     Response = build_handshake_response(Handshake, Username, Password,
                                         Database, SetFoundRows),
     {ok, SeqNum3} = send_packet(SockModule, Socket, Response, SeqNum2),
-    {ok, ConfirmPacket, _SeqNum4} = recv_packet(SockModule, Socket, SeqNum3),
+    handshake_finish_or_switch_auth(Handshake, Password, SockModule, Socket, SeqNum3).
+
+handshake_finish_or_switch_auth(Handshake, Password, SockModule, Socket, SeqNum0) ->
+    {ok, ConfirmPacket, SeqNum1} = recv_packet(SockModule, Socket, SeqNum0),
     case parse_handshake_confirm(ConfirmPacket) of
         #ok{status = OkStatus} ->
             OkStatus = Handshake#handshake.status,
             {ok, Handshake, SockModule, Socket};
+        #auth_method_switch{auth_plugin_name = AuthPluginName, auth_plugin_data = AuthPluginData} ->
+            Hash = case AuthPluginName of
+                       <<>> ->
+                           hash_password(Password, AuthPluginData);
+                       <<"mysql_native_password">> ->
+                           hash_password(Password, AuthPluginData);
+                       UnknownAuthMethod ->
+                           error({auth_method, UnknownAuthMethod})
+                   end,
+            {ok, SeqNum2} = send_packet(SockModule, Socket, Hash, SeqNum1),
+            handshake_finish_or_switch_auth(Handshake, Password, SockModule, Socket, SeqNum2);
         Error ->
             Error
     end.
@@ -339,11 +353,11 @@ parse_handshake_confirm(Packet) ->
             %% switch to Old Password Authentication if CLIENT_PLUGIN_AUTH
             %% capability is not supported (by either the client or the server)"
             error(old_auth);
-        <<?EOF, _/binary>> ->
+        <<?EOF, AuthMethodSwitch/binary>> ->
             %% "Authentication Method Switch Request Packet. If both server and
             %% client support CLIENT_PLUGIN_AUTH capability, server can send
             %% this packet to ask client to use another authentication method."
-            error(auth_method_switch)
+            parse_auth_method_switch(AuthMethodSwitch)
     end.
 
 %% -- both text and binary protocol --
@@ -1002,6 +1016,23 @@ parse_eof_packet(<<?EOF:8, NumWarnings:16/little, StatusFlags:16/little>>) ->
     %% EOF packet, 4.1 protocol.
     %% (Older protocol: <<?EOF:8>>)
     #eof{status = StatusFlags, warning_count = NumWarnings}.
+
+-spec parse_auth_method_switch(binary()) -> #auth_method_switch{}.
+parse_auth_method_switch(AMSData) ->
+    {AuthPluginName, AuthPluginData} = get_null_terminated_binary(AMSData),
+    #auth_method_switch{
+       auth_plugin_name = AuthPluginName,
+       auth_plugin_data = AuthPluginData
+      }.
+
+-spec get_null_terminated_binary(binary()) -> {Binary :: binary(), Rest :: binary()}.
+get_null_terminated_binary(In) ->
+    get_null_terminated_binary(In, <<>>).
+
+get_null_terminated_binary(<<0, Rest/binary>>, Acc) ->
+    {Acc, Rest};
+get_null_terminated_binary(<<Ch, Rest/binary>>, Acc) ->
+    get_null_terminated_binary(Rest, <<Acc/binary, Ch>>).
 
 -spec hash_password(Password :: iodata(), Salt :: binary()) -> Hash :: binary().
 hash_password(Password, Salt) ->
